@@ -13,3 +13,5 @@ pydantic~=2.10.3
 passlib~=1.7.4
 pydantic_core~=2.27.1
 typing_extensions~=4.12.2
+alembic~=1.14.0
+python-dotenv~=1.0.1
