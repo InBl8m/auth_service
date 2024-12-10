@@ -16,6 +16,7 @@ class User(Base):
     id = Column(Integer, primary_key=True)
     username = Column(String(50), unique=True, nullable=False)
     password = Column(String(100), nullable=False)
+    email = Column(String, unique=True, index=True)
     role_id = Column(Integer, ForeignKey('roles.id'))
     role = relationship('Role', backref='users')
 
@@ -31,4 +32,3 @@ class RolePermission(Base):
     __tablename__ = 'role_permissions'
     role_id = Column(Integer, ForeignKey('roles.id'), primary_key=True)
     permission_id = Column(Integer, ForeignKey('permissions.id'), primary_key=True)
-
