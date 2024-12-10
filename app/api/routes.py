@@ -1,6 +1,7 @@
-from fastapi import APIRouter, Form, Request, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from fastapi.responses import RedirectResponse, JSONResponse
+from datetime import timedelta
+from fastapi import APIRouter, Form, Request, Depends, HTTPException, status, Cookie
+from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.security import OAuth2PasswordBearer
 from app.core.security import hash_password, verify_password, create_access_token, decode_access_token
@@ -88,8 +89,11 @@ async def login(
     user = db.query(User).filter(User.username == username).first()
     if user and verify_password(password, user.password):
         access_token = create_access_token(data={"sub": user.username, "role": user.role.name})
-        response = JSONResponse(content={"message": "Login successful"})
-        response.set_cookie(key="access_token", value=access_token, httponly=True)  # Устанавливаем cookie
+        new_refresh_token = create_access_token(data={"sub": user.username}, expires_delta=timedelta(days=7))
+        response = RedirectResponse(url="/dashboard", status_code=302)  # для шаблонов
+        # response = JSONResponse(content={"message": "Login successful"})
+        response.set_cookie(key="access_token", value=access_token, httponly=True)
+        response.set_cookie("refresh_token", new_refresh_token, httponly=True, path="/refresh-token")
         return response
 
     raise HTTPException(
@@ -115,10 +119,27 @@ async def debug_token(request: Request):
         return {"error": "Invalid token", "details": str(e)}
 
 
+@router.post("/refresh-token")
+async def refresh_token_handler(refresh_token: str = Cookie(None)):
+    if not refresh_token:
+        raise HTTPException(status_code=401, detail="Refresh token not found")
+
+    payload = decode_access_token(refresh_token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid refresh token")
+
+    access_token = create_access_token(data={"sub": payload["sub"]}, expires_delta=timedelta(minutes=15))
+
+    response = RedirectResponse(url="/dashboard", status_code=302)
+    response.set_cookie(key="access_token", value=access_token, httponly=True)
+
+    return response
+
+
 @router.get("/logout")
 async def logout():
     response = RedirectResponse(url="/login", status_code=302)
     # Удаляем токен из куки
     response.delete_cookie("access_token")
+    response.delete_cookie("refresh_token", path="/refresh-token")
     return response
-
