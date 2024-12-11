@@ -8,8 +8,11 @@ from app.core.security import hash_password, verify_password, create_access_toke
 from app.core.db import SessionLocal
 from app.api.models import User, Role
 from app.api.schemas import Token
+from app.api.google_auth import router as google_auth_router
+
 
 router = APIRouter()
+router.include_router(google_auth_router, tags=["google_auth"])
 templates = Jinja2Templates(directory="app/templates")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 

@@ -18,3 +18,4 @@ python-dotenv~=1.0.1
 bcrypt==4.2.1
 python-jose==3.3.0
 passlib==1.7.4
+starlette~=0.41.3
