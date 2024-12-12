@@ -1,7 +1,7 @@
 from sqlalchemy.orm import Session
 from datetime import timedelta
 from fastapi import APIRouter, Form, Request, Depends, HTTPException, status, Cookie
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.security import OAuth2PasswordBearer
 from app.core.security import hash_password, verify_password, create_access_token, decode_access_token
@@ -44,6 +44,11 @@ def get_db():
         yield db
     finally:
         db.close()
+
+
+@router.get("/user-info")
+async def user_info(current_user: dict = Depends(get_current_user)):
+    return {"username": current_user["sub"], "role": current_user["role"]}
 
 
 @router.get("/register")
@@ -93,8 +98,9 @@ async def login(
     if user and verify_password(password, user.password):
         access_token = create_access_token(data={"sub": user.username, "role": user.role.name})
         new_refresh_token = create_access_token(data={"sub": user.username}, expires_delta=timedelta(days=7))
-        response = RedirectResponse(url="/dashboard", status_code=302)  # для шаблонов
-        # response = JSONResponse(content={"message": "Login successful"})
+        # Перенаправляем на dashboard для шаблонов FastApi
+        # response = RedirectResponse(url="/dashboard", status_code=302)
+        response = JSONResponse(content={"message": "Login successful"})
         response.set_cookie(key="access_token", value=access_token, httponly=True)
         response.set_cookie("refresh_token", new_refresh_token, httponly=True, path="/refresh-token")
         return response
