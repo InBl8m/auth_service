@@ -87,7 +87,7 @@ async def google_auth_callback(request: Request, db: Session = Depends(get_db)):
         refresh_token = create_access_token(data={"sub": user.username}, expires_delta=timedelta(days=7))
 
         # Установка токенов в cookies
-        response = RedirectResponse(url="/dashboard", status_code=302)
+        response = RedirectResponse(url="http://127.0.0.1:3000/dashboard", status_code=302)
         response.set_cookie(key="access_token", value=access_token, httponly=True)
         response.set_cookie(key="refresh_token", value=refresh_token, httponly=True, path="/refresh-token")
 
