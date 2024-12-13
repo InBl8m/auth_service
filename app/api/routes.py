@@ -6,8 +6,8 @@ from fastapi.templating import Jinja2Templates
 from fastapi.security import OAuth2PasswordBearer
 from app.core.security import hash_password, verify_password, create_access_token, decode_access_token
 from app.core.db import SessionLocal
-from app.api.models import User, Role
-from app.api.schemas import Token
+from app.api.models import User, Role, Contact
+from app.api.schemas import Token, AddContactRequest
 from app.api.google_auth import router as google_auth_router
 
 
@@ -44,11 +44,6 @@ def get_db():
         yield db
     finally:
         db.close()
-
-
-@router.get("/user-info")
-async def user_info(current_user: dict = Depends(get_current_user)):
-    return {"username": current_user["sub"], "role": current_user["role"]}
 
 
 @router.get("/register")
@@ -109,6 +104,161 @@ async def login(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Invalid credentials"
     )
+
+
+def get_user_and_contact_by_username(current_user: dict, contact_username: str, db: Session):
+    # Получаем пользователя по текущему токену
+    user = db.query(User).filter(User.username == current_user["sub"]).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Current user not found")
+
+    # Получаем контакт по имени
+    contact = db.query(User).filter(User.username == contact_username).first()
+    if not contact:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # Проверяем, что контакт существует в базе
+    existing_contact = db.query(Contact).filter(Contact.user_id == user.id, Contact.contact_id == contact.id).first()
+
+    return user, contact, existing_contact
+
+
+@router.post("/add-contact")
+async def add_contact(
+    request: AddContactRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    contact_username = request.contact_username
+    if contact_username == current_user["sub"]:
+        raise HTTPException(status_code=400, detail="You cannot add yourself as a contact")
+
+    # Получаем текущего пользователя и целевого контакта
+    user, contact, existing_contact = get_user_and_contact_by_username(current_user, contact_username, db)
+
+    if existing_contact:
+        raise HTTPException(status_code=400, detail="Contact already exists")
+
+    # Добавляем новый контакт с confirmed=0
+    new_contact = Contact(user_id=user.id, contact_id=contact.id, confirmed=0)
+    db.add(new_contact)
+    db.commit()
+
+    # Проверяем, есть ли запись, где contact.id -> user.id с confirmed=0
+    reciprocal_contact = (
+        db.query(Contact)
+        .filter(Contact.user_id == contact.id, Contact.contact_id == user.id, Contact.confirmed == 0)
+        .first()
+    )
+
+    if reciprocal_contact:
+        # Если такая запись есть, обновляем обе записи на confirmed=1
+        new_contact.confirmed = 1
+        reciprocal_contact.confirmed = 1
+        db.commit()
+        return {"message": "Contact confirmed from both sides!"}
+
+    return {"message": "Contact added successfully, waiting for confirmation from the other side."}
+
+
+@router.get("/pending-requests")
+async def pending_requests(current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
+    # Получаем текущего пользователя
+    user = db.query(User).filter(User.username == current_user["sub"]).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # Находим все запросы, где текущий пользователь является contact_id и статус не подтверждён
+    pending = (
+        db.query(User, Contact)
+        .join(Contact, User.id == Contact.user_id)
+        .filter(Contact.contact_id == user.id, Contact.confirmed == 0)
+        .all()
+    )
+
+    # Формируем список запросов
+    pending_list = [
+        {
+            "id": requester[0].id,  # Данные пользователя, который отправил запрос
+            "username": requester[0].username,
+            "request_id": requester[1].id  # ID связи в таблице Contact
+        }
+        for requester in pending
+    ]
+
+    return {"pending_requests": pending_list}
+
+
+@router.delete("/remove-contact")
+async def remove_contact(
+    contact_username: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    # Используем вспомогательную функцию
+    user, contact, existing_contact = get_user_and_contact_by_username(current_user, contact_username, db)
+
+    if not existing_contact:
+        raise HTTPException(status_code=404, detail="Contact not found")
+
+    # Удаляем запись текущего пользователя
+    db.delete(existing_contact)
+
+    # Удаляем запись контакта, если существует
+    reciprocal_contact = db.query(Contact).filter(
+        Contact.user_id == contact.id,
+        Contact.contact_id == user.id,
+    ).first()
+
+    if reciprocal_contact:
+        db.delete(reciprocal_contact)
+
+    db.commit()
+
+    return {"message": f"Contact with username {contact_username} removed successfully for both users"}
+
+
+@router.get("/search-user")
+async def search_users(
+    query: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    # Получаем всех пользователей, соответствующих запросу
+    users = db.query(User).filter(User.username.ilike(f"%{query}%")).all()
+    # Получаем текущего пользователя
+    user = db.query(User).filter(User.username == current_user["sub"]).first()
+    # Получаем список контактов текущего пользователя
+    contacts = db.query(Contact).filter(Contact.user_id == user.id).all()
+    contact_ids = [contact.contact_id for contact in contacts]
+    # Исключаем текущего пользователя и уже добавленных контактов
+    filtered_users = [
+        {"id": user.id, "username": user.username}
+        for user in users
+        if user and user.username != current_user["sub"] and user.id not in contact_ids
+    ]
+
+    return filtered_users
+
+
+@router.get("/user-info")
+async def user_info(current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.username == current_user["sub"]).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    contacts = db.query(User, Contact).join(Contact,
+                                            User.id == Contact.contact_id).filter(Contact.user_id == user.id).all()
+    contact_list = [
+        {
+            "id": contact[0].id,
+            "username": contact[0].username,
+            "confirmed": contact[1].confirmed
+        }
+        for contact in contacts
+    ]
+
+    return {"username": user.username, "role": user.role.name, "contacts": contact_list}
 
 
 @router.get("/dashboard")

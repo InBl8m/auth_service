@@ -28,7 +28,7 @@ class UserOut(BaseModel):
     email: EmailStr
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 
 class UserResponse(UserBase):
@@ -36,4 +36,8 @@ class UserResponse(UserBase):
     role: str
 
     class Config:
-        orm_mode = True
+        from_attributes = True
+
+
+class AddContactRequest(BaseModel):
+    contact_username: str
